@@ -4,9 +4,14 @@
     python scripts/make_readme_assets.py
 
 输出：
-    assets/e2e_latency.png    整景端到端耗时对比（stage7_final_e2e.json）
-    assets/cpu_matching.png   CPU 匹配段优化前后（stage7_cpu_profile.json）
-    assets/results_table.md   结果总表（精度取 stage2_trt_accuracy.json，延迟/加速比取 stage3_benchmark.json）
+    assets/e2e_latency.png          整景端到端耗时对比（stage7_final_e2e.json）
+    assets/cpu_matching.png         CPU 匹配段优化前后（stage7_cpu_profile.json）
+    assets/jetson_opt_chain.png     Jetson 整景推理累加优化
+    assets/jetson_gpu_energy.png    Jetson GPU 忙碌率与每景能耗
+    assets/jetson_full_e2e.png      Jetson 原始文件到匹配结果
+    assets/jetson_cpp_e2e.png       Jetson C++ 与 Python 整景对比
+    assets/jetson_cpp_latency.png   Jetson Python / C++ 请求延迟对比
+    assets/results_table.md         结果总表（精度取 stage2_trt_accuracy.json，延迟/加速比取 stage3_benchmark.json）
 
 生成前会检查关键数字与 README.md 里已有的写法一致，不一致则报错退出，不写任何输出。
 运行结束打印 provenance 表：图表里出现的每个数字对应的 JSON 文件与字段路径。
@@ -549,14 +554,14 @@ def fig_jetson_full() -> None:
     plt.close(fig)
 
 
-CE_LABELS = {"P": "P  Python, final config (E)", "K0": "K0  C++, same schedule as E", "K1": "K1  + multi-thread mask / stats",
+CE_LABELS = {"P": "P  Python, final config (E)", "K0": "K0  C++/CUDA baseline (same schedule, fused kernels)", "K1": "K1  + multi-thread mask / stats",
              "K2": "K2  + multi-thread projection", "K3": "K3  + bulk read of the HSI file", "K4": "K4  + cached PROJ transformer",
              "K5": "K5  + LAS overlapped with HSI read (rejected)"}
 
 
 def fig_cpp_e2e() -> None:
     fig = plt.figure(figsize=(11.5, 4.9), facecolor=SURFACE)
-    ax = fig.add_axes([0.30, 0.12, 0.66, 0.62])
+    ax = fig.add_axes([0.36, 0.12, 0.60, 0.62])
     style_axes(ax)
     xmax = max(CE[c]["total_ms"] for c in CE_CFGS)
     for i, c in enumerate(CE_CFGS):
@@ -573,7 +578,7 @@ def fig_cpp_e2e() -> None:
             color=INK2, fontsize=8.5)
     ax.set_yticks(range(len(CE_CFGS)), [CE_LABELS[c] for c in CE_CFGS])
     ax.invert_yaxis()
-    ax.set_xlim(0, xmax * 1.2)
+    ax.set_xlim(0, xmax * 1.23)
     ax.set_ylim(len(CE_CFGS) - 0.5, -0.75)
     ax.set_xlabel("End-to-end latency from raw files on Jetson Orin Nano Super (ms, median of 10 runs, forward round)")
     ax.grid(axis="x", color=GRID, linewidth=1, zorder=0)
@@ -703,6 +708,19 @@ def build_table() -> str:
 
 # ------------------------------------------------------------------ 主流程
 def main() -> None:
+    generated_table = build_table()
+    table_path = ASSETS / "results_table.md"
+    start_marker = "<!-- results-table:start -->"
+    end_marker = "<!-- results-table:end -->"
+    if readme.count(start_marker) != 1 or readme.count(end_marker) != 1:
+        sys.exit("README results-table 标记缺失或重复，拒绝生成输出")
+    if not table_path.is_file():
+        sys.exit("缺少 assets/results_table.md，拒绝生成输出")
+    readme_table = readme.split(start_marker, 1)[1].split(end_marker, 1)[0].strip()
+    asset_table = table_path.read_text(encoding="utf-8").strip()
+    if readme_table != asset_table or readme_table != generated_table.strip():
+        sys.exit("README 结果表、assets/results_table.md 与当前 JSON 生成表不一致，拒绝生成输出")
+
     ASSETS.mkdir(exist_ok=True)
     fig_e2e()
     fig_cpu()
@@ -711,7 +729,7 @@ def main() -> None:
     fig_jetson_full()
     fig_cpp_e2e()
     fig_cpp_latency()
-    (ASSETS / "results_table.md").write_text(build_table(), encoding="utf-8")
+    (ASSETS / "results_table.md").write_text(generated_table, encoding="utf-8")
 
     print("| Where | Shown | File | Field | Raw value | Derived |")
     print("|---|---|---|---|---|---|")
